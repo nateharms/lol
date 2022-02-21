@@ -1,0 +1,820 @@
+#!/usr/bin/env python3
+#docker pull tensorflow/tensorflow                 
+#docker run -it --rm -v $PWD:/tmp -w /tmp tensorflow/tensorflow
+
+import tensorflow as tf
+import math
+import numpy as np
+import os
+import random
+import sys 
+
+### PRINT TO STANDARD ERROR
+def eprint(*args, **kwargs):
+    print(*args, file = sys.stderr, **kwargs)
+
+### TF QUIET
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+### dictionary of settings
+settings = {}
+settings['activation'] = "relu"
+settings['activity_regularizer'] = None
+settings['batch_size'] = 1024
+settings['bias_constraint'] = None
+settings['bias_initializer'] = "zeros"
+settings['bias_regularizer'] = None
+settings['coded_input'] = np.zeros((1024, 24), np.float16)
+settings['cores'] = 1
+settings['data_format'] = "channels_last"
+settings['dilation_rate'] = 1
+settings['directory'] = ''
+settings['dtype'] = tf.float32
+settings['epochSteps'] = 16
+settings['groups'] = 1
+settings['height'] = 24 ### utf8 maximum
+settings['inputDirectory'] = 'level0-microcosm/test'
+settings['kernel_constraint'] = None
+settings['kernel_initializer'] = "glorot_uniform"
+settings['kernel_regularizer'] = None
+settings['name']="input"
+settings['outputDirectory'] = ''
+settings['padding'] = "same"
+settings['strides'] = 1
+settings['use_bias'] = True
+settings['width'] = 1024 ### maximum string length
+settings['outputFile']= "outputFile"
+### constants
+RADIUS_OF_THE_EARTH = 6371.0087714 ### mean radius of the earth in km
+
+import getopt
+try:
+    arguments, values = getopt.getopt(sys.argv[1:], 'c:e:t:v:o:h', ['condition=', 'examining=', 'training=', 'validation=', 'output=', 'help='])
+except getopt.error as err:
+    eprint(str(err))
+    sys.exit(2)
+for argument, value in arguments:
+    if argument in ('-c', '--condition'):
+        if os.path.isdir(value):
+            settings['condition']= value
+    else:
+        eprint('condition directory does not exist {}'.format(value))
+        sys.exit(2)
+    if argument in ('-e', '--examining'):
+        if os.path.isdir(value):
+            settings['testing']= value
+    else:
+        eprint('testing directory does not exist {}'.format(value))
+        sys.exit(2)
+    if argument in ('-t', '--training'):
+        if os.path.isdir(value):
+            settings['training']= value
+    else: 
+        eprint('training directory does not exist {}'.format(value))
+        sys.exit(2)
+    if argument in ('-v', '--validation'):
+        if os.path.isdir(value):
+            settings['validationDirectory'] = value
+    else:
+        eprint('validation directory does not exist {}'.format(value))
+        sys.exit(2)
+    if argument in ('-o', '--output'):
+        if os.path.isdir(value):
+            settings['outputDirectory'] = value
+    else:
+        eprint('output directory does not exist {}'.format(value))
+        sys.exit(2)
+    if argument in ('-h','--help'):
+        eprint('A Python3 script to train a neural network using Keras with TensorFlow v1.13.')
+        eprint('condition optional: -co int | --embedding=int (default = %i)' % (settings['condition']))
+        eprint('testing optional: -te int | --testing=int (default = %i)' % (settings['testingdirectory']))
+        #eprint(testingDirectoryError)
+        eprint('training directory: -tr kbytes | --training=int (default = %i)' % (settings['validationDirectory']))
+        #eprint(trainingDirectoryError)
+        eprint('validation directory: -v int | --validation=int (default = %i)' % (settings['validationDirectory']))
+        #eprint(validationDirectoryError)
+        eprint('output optional: -o int | -output=int (default = %i)' % (settings['output']))
+        #eprint(outputDirectoryError)
+        sys.exit(0)
+
+#CHUNK 1
+class DataGenerator(tf.keras.utils.Sequence):
+    def __getitem__(self, i): ### generate a batch of data
+        x = np.zeros((self.batchSize, self.width, self.height), dtype = np.float16)
+        y = np.zeros((self.batchSize, 3), dtype = np.float16)
+        with open(self.files[i]) as reader: ### latitude, longitude, error, place
+            for k, line in enumerate(reader, start=0):
+                d = line.rstrip().split('\t')
+                if len(d) == 4:
+                    x[k,0:self.width,0:self.height] = self.__letters__(d[3])
+                    y[k,0:2] = np.asarray(d[0:2], dtype = np.float16)
+                else:
+                    eprint(f"Width error! file = {self.files[i]}; width = 4; line width = {(len(d)-1)}")
+        return x, y
+    def __init__(self, files, epochSteps, batchSize, width, height):
+        self.batchSize = batchSize
+        self.epochSteps = epochSteps
+        self.files = files
+        self.width = width
+        self.height = height
+    def __len__(self):
+        return self.epochSteps
+    def __letters__(self, letters):
+#letters = list("us arizona yavapai county  maricopa county: grown in cultivation at desert botanical garden, phoenix, n 33 deg 27' 33'', w 111 deg 56' 35'', 1200 ft., 366 m: accession number 1991 0297 0101; originally received as a plant salvaged by js, dbg staff, 14 march 1991, in arizona, yavapai county, lake pleasant regional park; t7n r1e section 30, upper sonoran vegetative zone; dominant plants ambrosia, deltoidea, larrea tridentata, parkinsonia microphyllum, cylindropuntia bigelovii, ferocactus cylindraceus; other associated plants: lycium spp., canotia holocantha, fouquieria splendens, eriogonum sp., calliandra eriophylla, viguiera deltoidea, mammillaria grahamii, echinocereus englemannii, cylindropuntia acanthocarpa var. thornberi, cylindropuntia fulgida, cylindropuntia leptocaulis, carnegiea gigantea, ephedra sp., sphaeralcea sp., simmondsia chinensis; originally received as cylindropuntia acanthocarpa, name changed per dzd.")
+        coded_input = np.zeros((self.width, self.height), dtype=np.float16)
+        for k, letter in enumerate(letters, start = 0):
+            if k > self.width:
+                eprint("Maximum width exceeded! Truncating data.")
+                break
+            coded_input[k,:] = np.array(list(np.binary_repr(ord(letter), self.height)), dtype= np.float16)
+        return coded_input
+    def on_epoch_end(self): ### useful when there is not enough data for a full run
+        random.shuffle(self.files)
+
+#CHUNK 2
+
+#CHUNK 3
+
+#CHUNK 4
+a = tf.keras.Input(
+    shape = (settings['width'], settings['height']), 
+    name = "input",
+    batch_size = settings['batch_size'],
+    dtype = settings['dtype']
+)
+a.shape
+
+#CHUNK 5
+#conv1_1x1
+b = tf.keras.layers.Conv1D(
+    192, # number of output filters 
+    1, # 1D convolutional Window 1x1
+    strides = settings['strides'],
+    padding = settings['padding'], 
+    data_format = settings['data_format'],
+    dtype = settings['dtype'],
+    dilation_rate = settings['dilation_rate'],
+    groups = settings['groups'],
+    activation = settings['activation'], 
+    use_bias = settings['use_bias'],
+    kernel_initializer = settings['kernel_initializer'],
+    bias_initializer = settings['bias_initializer'],
+    kernel_regularizer = settings['kernel_regularizer'],
+    bias_regularizer = settings['bias_regularizer'], 
+    activity_regularizer = settings['activity_regularizer'],
+    kernel_constraint = settings['kernel_constraint'],
+    bias_constraint = settings['bias_constraint'],
+    name = "conv1D_1x1_b"
+)(a)
+b.shape
+
+#CHUNK 6
+#conv1_3x3
+c = tf.keras.layers.Conv1D(
+    settings['height'],
+    3,
+    strides = settings['strides'],
+    padding = settings['padding'], 
+    dtype = settings['dtype'],
+    data_format = settings['data_format'],
+    dilation_rate = settings['dilation_rate'],
+    groups = settings['groups'],
+    activation = settings['activation'], 
+    use_bias = settings['use_bias'],
+    kernel_initializer = settings['kernel_initializer'],
+    bias_initializer = settings['bias_initializer'],
+    kernel_regularizer = settings['kernel_regularizer'],
+    bias_regularizer = settings['bias_regularizer'], 
+    activity_regularizer = settings['activity_regularizer'],
+    kernel_constraint = settings['kernel_constraint'],
+    bias_constraint = settings['bias_constraint'],
+    name = "conv1D_3x3_c"
+)(b)
+c.shape
+
+#CHUNK 7
+### merge skip connection with conv data
+d = tf.keras.layers.Add()([a, c])
+d.shape
+
+#CHUNK 8
+#convolutional 1-d
+e = tf.keras.layers.Conv1D(
+    192, # number of output filters 
+    1, # 1D convolutional Window 1x1
+    strides = settings['strides'],
+    padding = settings['padding'], 
+    data_format = settings['data_format'],
+    dtype = settings['dtype'],
+    dilation_rate = settings['dilation_rate'],
+    groups = settings['groups'],
+    activation = settings['activation'], 
+    use_bias = settings['use_bias'],
+    kernel_initializer = settings['kernel_initializer'],
+    bias_initializer = settings['bias_initializer'],
+    kernel_regularizer = settings['kernel_regularizer'],
+    bias_regularizer = settings['bias_regularizer'], 
+    activity_regularizer = settings['activity_regularizer'],
+    kernel_constraint = settings['kernel_constraint'],
+    bias_constraint = settings['bias_constraint'],
+    name = "conv1D_1x1_e"
+)(d)
+d.shape
+
+#CHUNK 9
+#conv2_1x1
+f = tf.keras.layers.Conv1D(
+    settings['height'],
+    3,  
+    strides = settings['strides'],
+    padding = settings['padding'], 
+    data_format = settings['data_format'],
+    dtype = settings['dtype'],
+    dilation_rate = settings['dilation_rate'],
+    groups = settings['groups'],
+    activation = settings['activation'], 
+    use_bias = settings['use_bias'],
+    kernel_initializer = settings['kernel_initializer'],
+    bias_initializer = settings['bias_initializer'],
+    kernel_regularizer = settings['kernel_regularizer'],
+    bias_regularizer = settings['bias_regularizer'], 
+    activity_regularizer = settings['activity_regularizer'],
+    kernel_constraint = settings['kernel_constraint'],
+    bias_constraint = settings['bias_constraint'],
+    name = "conv1D_3x3_f"
+)(e)
+f.shape
+
+#CHUNK 10
+### merge skip connection with conv data
+g = tf.keras.layers.Add()([a, f])
+g.shape
+
+#CHUNK 11
+#conv1d
+h = tf.keras.layers.Conv1D(
+    192, # number of output filters 
+    1, # 1D convolutional Window 1x1
+    strides = settings['strides'],
+    padding = settings['padding'], 
+    data_format = settings['data_format'],
+    dtype = settings['dtype'],
+    dilation_rate = settings['dilation_rate'],
+    groups = settings['groups'],
+    activation = settings['activation'], 
+    use_bias = settings['use_bias'],
+    kernel_initializer = settings['kernel_initializer'],
+    bias_initializer = settings['bias_initializer'],
+    kernel_regularizer = settings['kernel_regularizer'],
+    bias_regularizer = settings['bias_regularizer'], 
+    activity_regularizer = settings['activity_regularizer'],
+    kernel_constraint = settings['kernel_constraint'],
+    bias_constraint = settings['bias_constraint'],
+    name = "conv1D_1x1_h"
+)(g)
+h.shape
+
+#CHUNK 12
+#conv1d
+i = tf.keras.layers.Conv1D(
+    settings['height'],
+    3,  
+    strides = settings['strides'],
+    padding = settings['padding'], 
+    data_format = settings['data_format'],
+    dtype = settings['dtype'],
+    dilation_rate = settings['dilation_rate'],
+    groups = settings['groups'],
+    activation = settings['activation'], 
+    use_bias = settings['use_bias'],
+    kernel_initializer = settings['kernel_initializer'],
+    bias_initializer = settings['bias_initializer'],
+    kernel_regularizer = settings['kernel_regularizer'],
+    bias_regularizer = settings['bias_regularizer'], 
+    activity_regularizer = settings['activity_regularizer'],
+    kernel_constraint = settings['kernel_constraint'],
+    bias_constraint = settings['bias_constraint'],
+    name = "conv1D_1x1_i"
+)(h)
+i.shape
+
+#CHUNK 13
+### merge skip connection with conv data
+j = tf.keras.layers.Add()([a, i])
+j.shape
+
+#CHUNK 14
+#maxpooling 1d
+k =tf.keras.layers.MaxPooling1D(
+    dtype = settings['dtype'],
+    pool_size = 2, 
+    strides = settings['strides'], 
+    padding = settings['padding'], 
+    data_format = settings['data_format'], 
+    name = "maxpooling1D_k"
+)(j)
+k.shape
+
+#CHUNK 15
+#conv1d
+l = tf.keras.layers.Conv1D(
+    settings['height'],
+    3,  
+    strides = settings['strides'],
+    padding = settings['padding'], 
+    data_format = settings['data_format'],
+    dtype = settings['dtype'],
+    dilation_rate = settings['dilation_rate'],
+    groups = settings['groups'],
+    activation = settings['activation'], 
+    use_bias = settings['use_bias'],
+    kernel_initializer = settings['kernel_initializer'],
+    bias_initializer = settings['bias_initializer'],
+    kernel_regularizer = settings['kernel_regularizer'],
+    bias_regularizer = settings['bias_regularizer'], 
+    activity_regularizer = settings['activity_regularizer'],
+    kernel_constraint = settings['kernel_constraint'],
+    bias_constraint = settings['bias_constraint'],
+    name = "conv1D_3x3_l"
+)(k)
+l.shape
+
+#CHUNK 16
+### merge skip connection with conv data
+m = tf.keras.layers.Add()([a, l])
+m.shape
+
+#CHUNK 17
+#averagepooling1d
+n = tf.keras.layers.AveragePooling1D(
+    data_format = settings['data_format'],
+    dtype = settings['dtype'],
+    padding = settings['padding'],
+    pool_size = 19,
+    strides = 19,
+    name = "averagepooling1D_19x19_n"
+)(m)
+n.shape
+
+#CHUNK 18
+o = tf.keras.layers.Flatten(
+    data_format = settings['data_format'],
+    dtype = settings['dtype'],
+    name = "flatten"
+)(n)
+o.shape
+
+#CHUNK 19
+p = tf.keras.layers.Dense(
+    3, ### [lat (dd), lon (dd), error (m)]; + = n,e; - = s,w
+    activation = "tanh",
+    activity_regularizer = settings['activity_regularizer'],
+    bias_constraint = settings['bias_constraint'],
+    bias_initializer = settings['bias_initializer'],
+    bias_regularizer = settings['bias_regularizer'], 
+    dtype = settings['dtype'],
+    kernel_constraint = settings['kernel_constraint'],
+    kernel_initializer = settings['kernel_initializer'],
+    kernel_regularizer = settings['kernel_regularizer'],
+    name = "output",
+    use_bias = settings['use_bias']
+)(o)
+p.shape
+
+#CHUNK 20
+### Mean Absolute Error of Haversine distance (km) between observation and prediction including error radius
+def degrees_to_radians(deg):
+    pi_on_180 = 0.017453292519943295
+    return deg*pi_on_180
+
+def loss(observation, prediction):
+    obs = tf.map_fn(degrees_to_radians, observation[:,:2])
+    pre = tf.map_fn(degrees_to_radians, prediction[:,:2])
+    dlon_dlat = obs-pre
+    v = dlon_dlat/2
+    v = tf.sin(v)
+    v = v**2
+    a = v[:,1] + tf.cos(obs[:,1])*tf.cos(pre[:,1])*v[:,0] 
+    c = tf.sqrt(a)
+    c = 2*tf.math.asin(c) # correct
+    c = c*RADIUS_OF_THE_EARTH
+    finalDistance = tf.reduce_sum(c)
+    finalDistance = finalDistance/tf.dtypes.cast(tf.shape(observation)[0], dtype= tf.float32)
+    #finalDistance = finalDistance/tf.shape(observation)[0], dtype= tf.float32
+    #finalDistance = tf.dtypes.cast(finalDistance, dtype=tf.float32) / tf.shape(observation)[0]
+    radiusDifference = tf.math.subtract(prediction[:,2], observation[:,2])
+    radiusAbsDifference = tf.math.abs(radiusDifference)
+    finalRadius = tf.reduce_sum(radiusAbsDifference)/1000 ### convert m to km
+    final = (finalDistance+finalRadius)/2
+    return final
+
+# print("just wrong", loss(tf.constant([51.5007, 0.1246, 100.0]), tf.constant([40.6892, 74.0445, 100.0])))
+# print("oh so wrong", loss(tf.constant([51.5007, 0.1246, 100]), tf.constant([40.6892, 174.0445, 100])))
+# print("very, very wrong", loss(tf.constant([51.5007, 0.1246, 100]), tf.constant([140.6892, 174.0445, 100])))
+# print("almost perfect", loss(tf.constant([51.5007, 0.1246, 100]), tf.constant([51.5007, 0.1246, 1000])))
+# print("perfect", loss(tf.constant([51.5007, 0.1246, 100]), tf.constant([51.5007, 0.1246, 100])))
+print("just wrong => perfect", loss(tf.constant([[51.5007, 0.1246, 100],[51.5007, 0.1246, 100],[51.5007, 0.1246, 100],[51.5007, 0.1246, 100],[51.5007, 0.1246, 100]], dtype = tf.float32), tf.constant([[40.6892, 74.0445, 100],[40.6892, 174.0445, 100],[140.6892, 174.0445, 100],[51.5007, 0.1246, 1000],[51.5007, 0.1246, 100]], dtype = tf.float32)).numpy())
+print("just wrong", loss(tf.constant([[51.5007, 0.1246, 100],[51.5007, 0.1246, 100],[51.5007, 0.1246, 100]], dtype = tf.float32), tf.constant([[40.6892, 74.0445, 100],[40.6892, 174.0445, 100],[140.6892, 174.0445, 100]], dtype = tf.float32)).numpy())
+print("perfect (almost)", loss(tf.constant([[51.5007, 0.1246, 100],[51.5007, 0.1246, 100]], dtype = tf.float32), tf.constant([[51.5007, 0.1246, 1000],[51.5007, 0.1246, 100]], dtype = tf.float32)).numpy())
+#sys.exit(0)
+
+#CHUNK 21
+model = tf.keras.Model(
+    inputs = a, 
+    outputs = p,
+    name = "CharTecNet"
+)
+model.summary
+# tf.keras.utils.plot_model(model, "CharTecNet.png", show_shapes = True)
+model.compile(
+    optimizer = tf.keras.optimizers.Adam(learning_rate = 0.001),
+    loss = loss
+)
+model.save(f"{settings['outputFile']}.h5")
+
+#CHUNK 22
+inputFiles = []
+for f in os.listdir(settings['inputDirectory']):
+    f = os.path.join(settings['inputDirectory'], f)
+    if os.path.isfile(f) == True:
+        if os.path.splitext(f)[-1].lower() == '.tsv':
+            inputFiles.append(f)
+        else:
+            eprint('skipped file %s' % f)
+random.seed(os.urandom(64))
+split = int(len(inputFiles)*(1-(1/settings['epochSteps'])))
+trainingGenerator = DataGenerator(inputFiles[0:split], settings['epochSteps'], settings['batch_size'], settings['width'], settings['height'])
+testingGenerator = DataGenerator(inputFiles[(split+1):], settings['epochSteps'], settings['batch_size'], settings['width'], settings['height'])
+
+
+#CHUNK 23
+model.fit(
+    callbacks = [
+    tf.keras.callbacks.ModelCheckpoint(os.path.join(settings['outputDirectory'], 'training-e{epoch:04d}-l{loss:.4f}.hdf5'), verbose = 1)
+    ],
+    epochs = 512,
+    x = trainingGenerator,
+    steps_per_epoch = settings['epochSteps'],
+    use_multiprocessing = False,
+    validation_data = testingGenerator,
+    validation_steps = 1,
+    verbose = 1,
+    workers = settings['cores'])
+
+    #!/usr/bin/env python3
+from decimal import *
+#import arithmetic
+import getopt
+import multiprocessing
+import numpy as np
+import lzma
+import os
+import random
+import sys
+#import xxhash
+
+### PRINT TO STANDARD ERROR
+def eprint(*args, **kwargs):
+	print(*args, file = sys.stderr, **kwargs)
+
+### USER SETTINGS
+settings = {}
+settings['cpu'] = False
+settings['gpu'] = '0'
+settings['jackknife'] = False
+settings['model'] = ''
+settings['outputDirectory'] = ''
+settings['processors'] = multiprocessing.cpu_count()
+settings['ratchet'] = 0
+
+### OTHER SETTINGS
+settings['batch'] = 1024
+settings['epochs'] = 128 ### 64 epochs of 1024 must occur before each taxon could have been trained on at least once
+settings['epochSteps'] = 16
+settings['maxDimension'] = (1000,1000) ### height,width [herbarium2021]
+settings['maxLength'] = 24 #maybe will need who knows
+settings['validationSteps'] = 1
+settings['precision'] = 64
+
+try:
+	arguments, values = getopt.getopt(sys.argv[1:], 'a:cf:g:hjl:m:o:p:r:s:', ['author=', 'cpu', 'function=', 'gpu=', 'help', 'jackknife', 'label=', 'model=', 'output=', 'processors=', 'ratchet=' 'scientific='])
+except getopt.error as err:
+	eprint(str(err))
+	sys.exit(2)
+for argument, value in arguments:
+	if argument in ('-a', '--author'):
+		if os.path.isfile(value):
+			settings['authorFrequencyFile'] = value
+		else:
+			eprint(f"author frequency file does not exist {value}")
+			sys.exit(2)
+	elif argument in ('-c', '--cpu'):
+		settings['cpu'] = True
+	elif argument in ('-f', '--function') and value in lossFunctions:
+		settings['loss'] = value
+	elif argument in ('-g', '--gpu') and int(value) >= 0: ### does not test if device is valid
+		settings['gpu'] = value
+	elif argument in ('-j', '--jackknife'):
+		settings['jackknife'] = True
+	elif argument in ('-h', '--help'):
+		eprint('\n\nA Python3 script to train SqueezeNext models on images with TensorFlow v2.5.0.')
+		eprint(authorFrequencyFileError)
+		eprint(f"CPU only (optional; default = {not settings['cpu']}): -c | --cpu")
+		eprint(f"function for loss (optional; default = {settings['loss']}): -f {'|'.join(lossFunctions)} | --function={'|'.join(lossFunctions)}")
+		eprint(f"run on specified GPU (optional; default = {settings['gpu']}; CPU option overrides GPU settings): -g int | --gpu int")
+		eprint(f"alternating jackknife perturbation (optional; default = {settings['jackknife']}): -j | --jackknife")
+		eprint(labelError)
+		eprint(modelError)
+		eprint(outputDirectoryError)
+		eprint(f"processors (optional; default = {settings['processors']}): -p int | --processors=int")
+		eprint(f"alternating ratchet perturbation (optional; default = {settings['ratchet']}% weighting): -r int | --ratchet int")
+		eprint(scientificFrequencyFileError + '\n')
+		sys.exit(0)
+	elif argument in ('-l', '--label'):
+		if os.path.isfile(value):
+			settings['labelFile'] = value
+		else:
+			eprint(f"label file does not exist {value}")
+			sys.exit(2)
+	elif argument in ('-m', '--model'):
+		if os.path.isfile(value):
+			settings['model'] = value
+		else:
+			eprint(f"model does not exist {value}")
+			sys.exit(2)
+	elif argument in ('-o', '--output'):
+		if os.path.isdir(value):
+			settings['outputDirectory'] = value
+		else:
+			eprint(f"model output directory does not exist {value}")
+			sys.exit(2)
+	elif argument in ('-p', '--processors') and int(value) > 0:
+		settings['processors'] = int(value)
+	elif argument in ('-r', '--ratchet') and int(value) > 0 and int(value) < 100:
+		settings['ratchet'] = int(value)
+	elif argument in ('-s', '--scientific'):
+		if os.path.isfile(value):
+			settings['scientificFrequencyFile'] = value
+		else:
+			eprint(f"scientific frequency file does not exist {value}")
+			sys.exit(2)
+
+### START/END
+
+### INIT
+getcontext().prec = settings['precision']
+settings['ratchet'] = round((settings['ratchet']/100)*settings['batch'])
+random.seed(os.urandom(64))
+
+### DISABLE OR SET GPU, THEN IMPORT TF
+if settings['cpu'] == True:
+	os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+else:
+	# os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
+	os.environ['CUDA_VISIBLE_DEVICES'] = settings['gpu']
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+eprint(f"TensorFlow GPUs = {len(tf.config.experimental.list_physical_devices('GPU'))}")
+eprint(f"TensorFlow {tf.version.VERSION}")
+
+### DATA GENERATOR
+class DataGenerator(tf.keras.utils.Sequence):
+    def __getitem__(self, i): ### generate a batch of data
+        x = np.zeros((self.batchSize, self.width, self.height), dtype = np.float16)
+        y = np.zeros((self.batchSize, 3), dtype = np.float16)
+        with open(self.files[i]) as reader: ### latitude, longitude, error, place
+            for k, line in enumerate(reader, start=0):
+                d = line.rstrip().split('\t')
+                if len(d) == 4:
+                    x[k,0:self.width,0:self.height] = self.__letters__(d[3])
+                    y[k,0:2] = np.asarray(d[0:2], dtype = np.float16)
+                else:
+                    eprint(f"Width error! file = {self.files[i]}; width = 4; line width = {(len(d)-1)}")
+        return x, y
+    def __init__(self, files, epochSteps, batchSize, width, height):
+        self.batchSize = batchSize
+        self.epochSteps = epochSteps
+        self.files = files
+        self.width = width
+        self.height = height
+    def __len__(self):
+        return self.epochSteps
+    def __letters__(self, letters):
+#letters = list("us arizona yavapai county  maricopa county: grown in cultivation at desert botanical garden, phoenix, n 33 deg 27' 33'', w 111 deg 56' 35'', 1200 ft., 366 m: accession number 1991 0297 0101; originally received as a plant salvaged by js, dbg staff, 14 march 1991, in arizona, yavapai county, lake pleasant regional park; t7n r1e section 30, upper sonoran vegetative zone; dominant plants ambrosia, deltoidea, larrea tridentata, parkinsonia microphyllum, cylindropuntia bigelovii, ferocactus cylindraceus; other associated plants: lycium spp., canotia holocantha, fouquieria splendens, eriogonum sp., calliandra eriophylla, viguiera deltoidea, mammillaria grahamii, echinocereus englemannii, cylindropuntia acanthocarpa var. thornberi, cylindropuntia fulgida, cylindropuntia leptocaulis, carnegiea gigantea, ephedra sp., sphaeralcea sp., simmondsia chinensis; originally received as cylindropuntia acanthocarpa, name changed per dzd.")
+        coded_input = np.zeros((self.width, self.height), dtype=np.float16)
+        for k, letter in enumerate(letters, start = 0):
+            if k > self.width:
+                eprint("Maximum width exceeded! Truncating data.")
+                break
+            coded_input[k,:] = np.array(list(np.binary_repr(ord(letter), self.height)), dtype= np.float16)
+        return coded_input
+    def on_epoch_end(self): ### useful when there is not enough data for a full run
+        random.shuffle(self.files)
+
+#testingGenerator 
+# #class DataGenerator(tf.keras.utils.Sequence):
+#     #def __getitem__(self, i): ### generate a batch of data
+#         #x = np.zeros((self.batchSize, self.width, self.height), dtype = np.float16)
+#         #y = np.zeros((self.batchSize, 3), dtype = np.float16)
+#         with open(self.files[i]) as reader: ### latitude, longitude, error, place
+#             for k, line in enumerate(reader, start=0):
+#                 d = line.rstrip().split('\t')
+#                 if len(d) == 4:
+#                     x[k,0:self.width,0:self.height] = self.__letters__(d[3])
+#                     y[k,0:2] = np.asarray(d[0:2], dtype = np.float16)
+#                 else:
+#                     eprint(f"Width error! file = {self.files[i]}; width = 4; line width = {(len(d)-1)}")
+#         return x, y
+#     def __init__(self, testing, epochSteps, batchSize, width, height):
+#         self.batchSize = batchSize
+#         self.epochSteps = epochSteps
+#         self.testing = testing
+#         self.width = width
+#         self.height = height
+#     def __len__(self):
+#         return self.epochSteps
+#     def __letters__(self, letters):
+# #letters = list("us arizona yavapai county  maricopa county: grown in cultivation at desert botanical garden, phoenix, n 33 deg 27' 33'', w 111 deg 56' 35'', 1200 ft., 366 m: accession number 1991 0297 0101; originally received as a plant salvaged by js, dbg staff, 14 march 1991, in arizona, yavapai county, lake pleasant regional park; t7n r1e section 30, upper sonoran vegetative zone; dominant plants ambrosia, deltoidea, larrea tridentata, parkinsonia microphyllum, cylindropuntia bigelovii, ferocactus cylindraceus; other associated plants: lycium spp., canotia holocantha, fouquieria splendens, eriogonum sp., calliandra eriophylla, viguiera deltoidea, mammillaria grahamii, echinocereus englemannii, cylindropuntia acanthocarpa var. thornberi, cylindropuntia fulgida, cylindropuntia leptocaulis, carnegiea gigantea, ephedra sp., sphaeralcea sp., simmondsia chinensis; originally received as cylindropuntia acanthocarpa, name changed per dzd.")
+#         coded_input = np.zeros((self.width, self.height), dtype=np.float16)
+#         for k, letter in enumerate(letters, start = 0):
+#             if k > self.width:
+#                 eprint("Maximum width exceeded! Truncating data.")
+#                 break
+#             coded_input[k,:] = np.array(list(np.binary_repr(ord(letter), self.height)), dtype= np.float16)
+#         return coded_input
+#     def on_epoch_end(self): ### useful when there is not enough data for a full run
+#         random.shuffle(self.files)
+
+# #trainingGenerator 
+# class DataGenerator(tf.keras.utils.Sequence):
+#     def __getitem__(self, i): ### generate a batch of data
+#         x = np.zeros((self.batchSize, self.width, self.height), dtype = np.float16)
+#         y = np.zeros((self.batchSize, 3), dtype = np.float16)
+#         with open(self.files[i]) as reader: ### latitude, longitude, error, place
+#             for k, line in enumerate(reader, start=0):
+#                 d = line.rstrip().split('\t')
+#                 if len(d) == 4:
+#                     x[k,0:self.width,0:self.height] = self.__letters__(d[3])
+#                     y[k,0:2] = np.asarray(d[0:2], dtype = np.float16)
+#                 else:
+#                     eprint(f"Width error! file = {self.files[i]}; width = 4; line width = {(len(d)-1)}")
+#         return x, y
+#     def __init__(self, training, epochSteps, batchSize, width, height):
+#         self.batchSize = batchSize
+#         self.epochSteps = epochSteps
+#         self.training = training
+#         self.width = width
+#         self.height = height
+#     def __len__(self):
+#         return self.epochSteps
+#     def __letters__(self, letters):
+# #letters = list("us arizona yavapai county  maricopa county: grown in cultivation at desert botanical garden, phoenix, n 33 deg 27' 33'', w 111 deg 56' 35'', 1200 ft., 366 m: accession number 1991 0297 0101; originally received as a plant salvaged by js, dbg staff, 14 march 1991, in arizona, yavapai county, lake pleasant regional park; t7n r1e section 30, upper sonoran vegetative zone; dominant plants ambrosia, deltoidea, larrea tridentata, parkinsonia microphyllum, cylindropuntia bigelovii, ferocactus cylindraceus; other associated plants: lycium spp., canotia holocantha, fouquieria splendens, eriogonum sp., calliandra eriophylla, viguiera deltoidea, mammillaria grahamii, echinocereus englemannii, cylindropuntia acanthocarpa var. thornberi, cylindropuntia fulgida, cylindropuntia leptocaulis, carnegiea gigantea, ephedra sp., sphaeralcea sp., simmondsia chinensis; originally received as cylindropuntia acanthocarpa, name changed per dzd.")
+#         coded_input = np.zeros((self.width, self.height), dtype=np.float16)
+#         for k, letter in enumerate(letters, start = 0):
+#             if k > self.width:
+#                 eprint("Maximum width exceeded! Truncating data.")
+#                 break
+#             coded_input[k,:] = np.array(list(np.binary_repr(ord(letter), self.height)), dtype= np.float16)
+#         return coded_input
+#     def on_epoch_end(self): ### useful when there is not enough data for a full run
+#         random.shuffle(self.files)
+
+### LOSS FUNCTION
+def degrees_to_radians(deg):
+    pi_on_180 = 0.017453292519943295
+    return deg*pi_on_180
+
+def loss(observation, prediction):
+    obs = tf.map_fn(degrees_to_radians, observation[:,:2])
+    pre = tf.map_fn(degrees_to_radians, prediction[:,:2])
+    dlon_dlat = obs-pre
+    v = dlon_dlat/2
+    v = tf.sin(v)
+    v = v**2
+    a = v[:,1] + tf.cos(obs[:,1])*tf.cos(pre[:,1])*v[:,0] 
+    c = tf.sqrt(a)
+    c = 2*tf.math.asin(c) # correct
+    c = c*RADIUS_OF_THE_EARTH
+    finalDistance = tf.reduce_sum(c)
+    finalDistance = finalDistance/tf.dtypes.cast(tf.shape(observation)[0], dtype= tf.float32)
+    radiusDifference = tf.math.subtract(prediction[:,2], observation[:,2])
+    radiusAbsDifference = tf.math.abs(radiusDifference)
+    finalRadius = tf.reduce_sum(radiusAbsDifference)/1000 ### convert m to km
+    final = (finalDistance+finalRadius)/2
+    return final
+
+# print("just wrong", loss(tf.constant([51.5007, 0.1246, 100.0]), tf.constant([40.6892, 74.0445, 100.0])))
+# print("oh so wrong", loss(tf.constant([51.5007, 0.1246, 100]), tf.constant([40.6892, 174.0445, 100])))
+# print("very, very wrong", loss(tf.constant([51.5007, 0.1246, 100]), tf.constant([140.6892, 174.0445, 100])))
+# print("almost perfect", loss(tf.constant([51.5007, 0.1246, 100]), tf.constant([51.5007, 0.1246, 1000])))
+# print("perfect", loss(tf.constant([51.5007, 0.1246, 100]), tf.constant([51.5007, 0.1246, 100])))
+print("just wrong => perfect", loss(tf.constant([[51.5007, 0.1246, 100],[51.5007, 0.1246, 100],[51.5007, 0.1246, 100],[51.5007, 0.1246, 100],[51.5007, 0.1246, 100]], dtype = tf.float32), tf.constant([[40.6892, 74.0445, 100],[40.6892, 174.0445, 100],[140.6892, 174.0445, 100],[51.5007, 0.1246, 1000],[51.5007, 0.1246, 100]], dtype = tf.float32)).numpy())
+print("just wrong", loss(tf.constant([[51.5007, 0.1246, 100],[51.5007, 0.1246, 100],[51.5007, 0.1246, 100]], dtype = tf.float32), tf.constant([[40.6892, 74.0445, 100],[40.6892, 174.0445, 100],[140.6892, 174.0445, 100]], dtype = tf.float32)).numpy())
+print("perfect (almost)", loss(tf.constant([[51.5007, 0.1246, 100],[51.5007, 0.1246, 100]], dtype = tf.float32), tf.constant([[51.5007, 0.1246, 1000],[51.5007, 0.1246, 100]], dtype = tf.float32)).numpy())
+sys.exit(0)
+#
+# fix import
+#
+	# y.append(arithmetic.decodeFloat32(y_pred[0:3], scientificSymbols, settings['maxLength'], settings['digits'])) ### Order (4: 0-3)
+	# y.append(arithmetic.decodeFloat32(y_pred[4:7], scientificSymbols, settings['maxLength'], settings['digits'])) ### Family (4: 4-7)
+	# y.append(arithmetic.decodeFloat32(y_pred[8:11], scientificSymbols, settings['maxLength'], settings['digits'])) ### Genus (4: 8-11)
+	# y.append(arithmetic.decodeFloat32(y_pred[12:19], scientificSymbols, settings['maxLength'], settings['digits'])) ### specific (8: 12-19)
+	# y.append(arithmetic.decodeFloat32(y_pred[20], scientificSymbols, settings['maxLength'], settings['digits'])) ### infraSpecificRank (1: 20)
+	# y.append(arithmetic.decodeFloat32(y_pred[21:26], scientificSymbols, settings['maxLength'], settings['digits'])) ### infraSpecific (6: 21-26)
+	# y.append(arithmetic.decodeFloat32(y_pred[27], scientificSymbols, settings['maxLength'], settings['digits'])) ### infrainfraSpecificRank (1: 27)
+	# y.append(arithmetic.decodeFloat32(y_pred[28:29], scientificSymbols, settings['maxLength'], settings['digits'])) ### infraintraSpecific (2: 28-29)
+	# y.append(arithmetic.decodeFloat32(y_pred[30:39], authorSymbols, settings['maxLength'], settings['digits'])) ### parentheticalAuthors (10: 30-39)
+	# y.append(arithmetic.decodeFloat32(y_pred[40:49], authorSymbols, settings['maxLength'], settings['digits'])) ### nonparentheticalAuthors (10: 40-49)
+	#return y
+
+def floatY(y_true):
+	y = y_true.numpy()[0]
+	if y in taxon2floats:
+		return taxon2floats[y]
+	else:
+		eprint(f"y numerical stability error: '{y}'!")
+		return np.empty((settings['outputs']), dtype = np.float32)
+
+def labelY(y_true):
+	y = int(y_true.numpy()[0])
+	if y in taxon2labels:
+		return taxon2labels[y]
+	else:
+		eprint(f"y numerical stability error: '{y}'!")
+		return ['Order', 'Family', 'Genus', 'specific', 'infraSpecificRank', 'infraSpecific', 'infrainfraSpecificRank', 'infrainfraSpecific', 'parentheticalAuthors', 'nonparentheticalAuthors']
+
+def weightY(y_true):
+	return tf.constant(y_true.numpy()[1]/settings['floatFactor'], dtype = tf.float32)
+
+lossCosine = tf.keras.losses.CosineSimilarity(
+	reduction = tf.keras.losses.Reduction.SUM
+)
+
+lossMAE = tf.keras.losses.MeanAbsoluteError(
+	reduction = tf.keras.losses.Reduction.SUM
+)
+
+def loss(y_true, y_pred):
+	w = tf.map_fn(
+			weightY,
+			y_true,
+			fn_output_signature = tf.float32,
+			infer_shape = True,
+			parallel_iterations = settings['processors'],
+			swap_memory = False
+		)
+	if settings['loss'] == 'cosine' or settings['loss'] == 'mae':
+		y = tf.map_fn(
+			floatY,
+			y_true,
+			fn_output_signature = tf.TensorSpec(
+				(settings['outputs']),
+				dtype = tf.float32
+			),
+			infer_shape = True,
+			parallel_iterations = settings['processors'],
+			swap_memory = False
+		)
+		if settings['loss'] == 'cosine':
+			return lossCosine(
+				y,
+				y_pred,
+				sample_weight = w
+			)
+		elif settings['loss'] == 'mae':
+			return lossMAE(
+				y,
+				y_pred,
+				sample_weight = w
+			)
+	elif settings['loss'] == 'patristic':
+#
+# do something...
+#
+		eprint('patristic not implemented...')
+		return 0
+
+
+
+### PREDICT MODEL
+model = tf.keras.models.load_model(settings['model'], compile = False)
+model.summary
+model.compile(
+	optimizer = tf.keras.optimizers.Adam(learning_rate = 0.001),
+	loss = loss,
+	run_eagerly = True
+)
+eprint('starting training...')
+model.fit(
+	callbacks = [
+		tf.keras.callbacks.ModelCheckpoint(os.path.join(settings['outputDirectory'], 'training-e{epoch:04d}-l{loss:.4f}.hdf5'), verbose = 1)
+	],
+	epochs = settings['epochs'],
+	steps_per_epoch = settings['epochSteps'],
+	use_multiprocessing = False,
+	validation_data = testingGenerator,
+	validation_steps = settings['validationSteps'],
+	verbose = 1,
+	workers = 1,#settings['processors'],
+	x = trainingGenerator
+)
