@@ -98,27 +98,34 @@ for argument, value in arguments:
         sys.exit(0)
 
 #CHUNK 1
-class DataGenerator(tf.keras.utils.Sequence):
+class DataGenerator(tf.keras.utils.Sequence):	
     def __getitem__(self, i): ### generate a batch of data
         x = np.zeros((self.batchSize, self.width, self.height), dtype = np.float16)
         y = np.zeros((self.batchSize, 3), dtype = np.float16)
-        with open(self.files[i]) as reader: ### latitude, longitude, error, place
-            for k, line in enumerate(reader, start=0):
-                d = line.rstrip().split('\t')
-                if len(d) == 4:
-                    x[k,0:self.width,0:self.height] = self.__letters__(d[3])
-                    y[k,0:2] = np.asarray(d[0:2], dtype = np.float16)
-                else:
-                    eprint(f"Width error! file = {self.files[i]}; width = 4; line width = {(len(d)-1)}")
+	
+	try:
+            with open(self.files[i]) as reader: ### latitude, longitude, error, place
+                for k, line in enumerate(reader, start=0):
+                    d = line.rstrip().split('\t')
+                    if len(d) == 4:
+                        x[k,0:self.width,0:self.height] = self.__letters__(d[3])
+                        y[k,0:2] = np.asarray(d[0:2], dtype = np.float16)
+                    else:
+                        eprint(f"Width error! file = {self.files[i]}; width = 4; line width = {(len(d)-1)}. May not result in expected behavior. Returning Zeros")
+	except IndexError:
+	    eprint(f'Index was greater that the length of `self.files` (length {len(self.files)}. May not result in expected behavior. Returning Zeros')
         return x, y
+
     def __init__(self, files, epochSteps, batchSize, width, height):
         self.batchSize = batchSize
         self.epochSteps = epochSteps
         self.files = files
         self.width = width
         self.height = height
+	
     def __len__(self):
         return self.epochSteps
+
     def __letters__(self, letters):
 #letters = list("us arizona yavapai county  maricopa county: grown in cultivation at desert botanical garden, phoenix, n 33 deg 27' 33'', w 111 deg 56' 35'', 1200 ft., 366 m: accession number 1991 0297 0101; originally received as a plant salvaged by js, dbg staff, 14 march 1991, in arizona, yavapai county, lake pleasant regional park; t7n r1e section 30, upper sonoran vegetative zone; dominant plants ambrosia, deltoidea, larrea tridentata, parkinsonia microphyllum, cylindropuntia bigelovii, ferocactus cylindraceus; other associated plants: lycium spp., canotia holocantha, fouquieria splendens, eriogonum sp., calliandra eriophylla, viguiera deltoidea, mammillaria grahamii, echinocereus englemannii, cylindropuntia acanthocarpa var. thornberi, cylindropuntia fulgida, cylindropuntia leptocaulis, carnegiea gigantea, ephedra sp., sphaeralcea sp., simmondsia chinensis; originally received as cylindropuntia acanthocarpa, name changed per dzd.")
         coded_input = np.zeros((self.width, self.height), dtype=np.float16)
@@ -128,6 +135,7 @@ class DataGenerator(tf.keras.utils.Sequence):
                 break
             coded_input[k,:] = np.array(list(np.binary_repr(ord(letter), self.height)), dtype= np.float16)
         return coded_input
+
     def on_epoch_end(self): ### useful when there is not enough data for a full run
         random.shuffle(self.files)
 
@@ -577,107 +585,6 @@ import tensorflow as tf
 eprint(f"TensorFlow GPUs = {len(tf.config.experimental.list_physical_devices('GPU'))}")
 eprint(f"TensorFlow {tf.version.VERSION}")
 
-### DATA GENERATOR
-class DataGenerator(tf.keras.utils.Sequence):
-    def __getitem__(self, i): ### generate a batch of data
-        x = np.zeros((self.batchSize, self.width, self.height), dtype = np.float16)
-        y = np.zeros((self.batchSize, 3), dtype = np.float16)
-        with open(self.files[i]) as reader: ### latitude, longitude, error, place
-            for k, line in enumerate(reader, start=0):
-                d = line.rstrip().split('\t')
-                if len(d) == 4:
-                    x[k,0:self.width,0:self.height] = self.__letters__(d[3])
-                    y[k,0:2] = np.asarray(d[0:2], dtype = np.float16)
-                else:
-                    eprint(f"Width error! file = {self.files[i]}; width = 4; line width = {(len(d)-1)}")
-        return x, y
-    def __init__(self, files, epochSteps, batchSize, width, height):
-        self.batchSize = batchSize
-        self.epochSteps = epochSteps
-        self.files = files
-        self.width = width
-        self.height = height
-    def __len__(self):
-        return self.epochSteps
-    def __letters__(self, letters):
-#letters = list("us arizona yavapai county  maricopa county: grown in cultivation at desert botanical garden, phoenix, n 33 deg 27' 33'', w 111 deg 56' 35'', 1200 ft., 366 m: accession number 1991 0297 0101; originally received as a plant salvaged by js, dbg staff, 14 march 1991, in arizona, yavapai county, lake pleasant regional park; t7n r1e section 30, upper sonoran vegetative zone; dominant plants ambrosia, deltoidea, larrea tridentata, parkinsonia microphyllum, cylindropuntia bigelovii, ferocactus cylindraceus; other associated plants: lycium spp., canotia holocantha, fouquieria splendens, eriogonum sp., calliandra eriophylla, viguiera deltoidea, mammillaria grahamii, echinocereus englemannii, cylindropuntia acanthocarpa var. thornberi, cylindropuntia fulgida, cylindropuntia leptocaulis, carnegiea gigantea, ephedra sp., sphaeralcea sp., simmondsia chinensis; originally received as cylindropuntia acanthocarpa, name changed per dzd.")
-        coded_input = np.zeros((self.width, self.height), dtype=np.float16)
-        for k, letter in enumerate(letters, start = 0):
-            if k > self.width:
-                eprint("Maximum width exceeded! Truncating data.")
-                break
-            coded_input[k,:] = np.array(list(np.binary_repr(ord(letter), self.height)), dtype= np.float16)
-        return coded_input
-    def on_epoch_end(self): ### useful when there is not enough data for a full run
-        random.shuffle(self.files)
-
-#testingGenerator 
-# #class DataGenerator(tf.keras.utils.Sequence):
-#     #def __getitem__(self, i): ### generate a batch of data
-#         #x = np.zeros((self.batchSize, self.width, self.height), dtype = np.float16)
-#         #y = np.zeros((self.batchSize, 3), dtype = np.float16)
-#         with open(self.files[i]) as reader: ### latitude, longitude, error, place
-#             for k, line in enumerate(reader, start=0):
-#                 d = line.rstrip().split('\t')
-#                 if len(d) == 4:
-#                     x[k,0:self.width,0:self.height] = self.__letters__(d[3])
-#                     y[k,0:2] = np.asarray(d[0:2], dtype = np.float16)
-#                 else:
-#                     eprint(f"Width error! file = {self.files[i]}; width = 4; line width = {(len(d)-1)}")
-#         return x, y
-#     def __init__(self, testing, epochSteps, batchSize, width, height):
-#         self.batchSize = batchSize
-#         self.epochSteps = epochSteps
-#         self.testing = testing
-#         self.width = width
-#         self.height = height
-#     def __len__(self):
-#         return self.epochSteps
-#     def __letters__(self, letters):
-# #letters = list("us arizona yavapai county  maricopa county: grown in cultivation at desert botanical garden, phoenix, n 33 deg 27' 33'', w 111 deg 56' 35'', 1200 ft., 366 m: accession number 1991 0297 0101; originally received as a plant salvaged by js, dbg staff, 14 march 1991, in arizona, yavapai county, lake pleasant regional park; t7n r1e section 30, upper sonoran vegetative zone; dominant plants ambrosia, deltoidea, larrea tridentata, parkinsonia microphyllum, cylindropuntia bigelovii, ferocactus cylindraceus; other associated plants: lycium spp., canotia holocantha, fouquieria splendens, eriogonum sp., calliandra eriophylla, viguiera deltoidea, mammillaria grahamii, echinocereus englemannii, cylindropuntia acanthocarpa var. thornberi, cylindropuntia fulgida, cylindropuntia leptocaulis, carnegiea gigantea, ephedra sp., sphaeralcea sp., simmondsia chinensis; originally received as cylindropuntia acanthocarpa, name changed per dzd.")
-#         coded_input = np.zeros((self.width, self.height), dtype=np.float16)
-#         for k, letter in enumerate(letters, start = 0):
-#             if k > self.width:
-#                 eprint("Maximum width exceeded! Truncating data.")
-#                 break
-#             coded_input[k,:] = np.array(list(np.binary_repr(ord(letter), self.height)), dtype= np.float16)
-#         return coded_input
-#     def on_epoch_end(self): ### useful when there is not enough data for a full run
-#         random.shuffle(self.files)
-
-# #trainingGenerator 
-# class DataGenerator(tf.keras.utils.Sequence):
-#     def __getitem__(self, i): ### generate a batch of data
-#         x = np.zeros((self.batchSize, self.width, self.height), dtype = np.float16)
-#         y = np.zeros((self.batchSize, 3), dtype = np.float16)
-#         with open(self.files[i]) as reader: ### latitude, longitude, error, place
-#             for k, line in enumerate(reader, start=0):
-#                 d = line.rstrip().split('\t')
-#                 if len(d) == 4:
-#                     x[k,0:self.width,0:self.height] = self.__letters__(d[3])
-#                     y[k,0:2] = np.asarray(d[0:2], dtype = np.float16)
-#                 else:
-#                     eprint(f"Width error! file = {self.files[i]}; width = 4; line width = {(len(d)-1)}")
-#         return x, y
-#     def __init__(self, training, epochSteps, batchSize, width, height):
-#         self.batchSize = batchSize
-#         self.epochSteps = epochSteps
-#         self.training = training
-#         self.width = width
-#         self.height = height
-#     def __len__(self):
-#         return self.epochSteps
-#     def __letters__(self, letters):
-# #letters = list("us arizona yavapai county  maricopa county: grown in cultivation at desert botanical garden, phoenix, n 33 deg 27' 33'', w 111 deg 56' 35'', 1200 ft., 366 m: accession number 1991 0297 0101; originally received as a plant salvaged by js, dbg staff, 14 march 1991, in arizona, yavapai county, lake pleasant regional park; t7n r1e section 30, upper sonoran vegetative zone; dominant plants ambrosia, deltoidea, larrea tridentata, parkinsonia microphyllum, cylindropuntia bigelovii, ferocactus cylindraceus; other associated plants: lycium spp., canotia holocantha, fouquieria splendens, eriogonum sp., calliandra eriophylla, viguiera deltoidea, mammillaria grahamii, echinocereus englemannii, cylindropuntia acanthocarpa var. thornberi, cylindropuntia fulgida, cylindropuntia leptocaulis, carnegiea gigantea, ephedra sp., sphaeralcea sp., simmondsia chinensis; originally received as cylindropuntia acanthocarpa, name changed per dzd.")
-#         coded_input = np.zeros((self.width, self.height), dtype=np.float16)
-#         for k, letter in enumerate(letters, start = 0):
-#             if k > self.width:
-#                 eprint("Maximum width exceeded! Truncating data.")
-#                 break
-#             coded_input[k,:] = np.array(list(np.binary_repr(ord(letter), self.height)), dtype= np.float16)
-#         return coded_input
-#     def on_epoch_end(self): ### useful when there is not enough data for a full run
-#         random.shuffle(self.files)
 
 ### LOSS FUNCTION
 def degrees_to_radians(deg):
@@ -712,20 +619,6 @@ print("just wrong => perfect", loss(tf.constant([[51.5007, 0.1246, 100],[51.5007
 print("just wrong", loss(tf.constant([[51.5007, 0.1246, 100],[51.5007, 0.1246, 100],[51.5007, 0.1246, 100]], dtype = tf.float32), tf.constant([[40.6892, 74.0445, 100],[40.6892, 174.0445, 100],[140.6892, 174.0445, 100]], dtype = tf.float32)).numpy())
 print("perfect (almost)", loss(tf.constant([[51.5007, 0.1246, 100],[51.5007, 0.1246, 100]], dtype = tf.float32), tf.constant([[51.5007, 0.1246, 1000],[51.5007, 0.1246, 100]], dtype = tf.float32)).numpy())
 sys.exit(0)
-#
-# fix import
-#
-	# y.append(arithmetic.decodeFloat32(y_pred[0:3], scientificSymbols, settings['maxLength'], settings['digits'])) ### Order (4: 0-3)
-	# y.append(arithmetic.decodeFloat32(y_pred[4:7], scientificSymbols, settings['maxLength'], settings['digits'])) ### Family (4: 4-7)
-	# y.append(arithmetic.decodeFloat32(y_pred[8:11], scientificSymbols, settings['maxLength'], settings['digits'])) ### Genus (4: 8-11)
-	# y.append(arithmetic.decodeFloat32(y_pred[12:19], scientificSymbols, settings['maxLength'], settings['digits'])) ### specific (8: 12-19)
-	# y.append(arithmetic.decodeFloat32(y_pred[20], scientificSymbols, settings['maxLength'], settings['digits'])) ### infraSpecificRank (1: 20)
-	# y.append(arithmetic.decodeFloat32(y_pred[21:26], scientificSymbols, settings['maxLength'], settings['digits'])) ### infraSpecific (6: 21-26)
-	# y.append(arithmetic.decodeFloat32(y_pred[27], scientificSymbols, settings['maxLength'], settings['digits'])) ### infrainfraSpecificRank (1: 27)
-	# y.append(arithmetic.decodeFloat32(y_pred[28:29], scientificSymbols, settings['maxLength'], settings['digits'])) ### infraintraSpecific (2: 28-29)
-	# y.append(arithmetic.decodeFloat32(y_pred[30:39], authorSymbols, settings['maxLength'], settings['digits'])) ### parentheticalAuthors (10: 30-39)
-	# y.append(arithmetic.decodeFloat32(y_pred[40:49], authorSymbols, settings['maxLength'], settings['digits'])) ### nonparentheticalAuthors (10: 40-49)
-	#return y
 
 def floatY(y_true):
 	y = y_true.numpy()[0]
